@@ -117,10 +117,11 @@ def load_data(path_str, mtime):
     clientes = pd.read_excel(path_str, sheet_name="Clientes")["Cliente"].dropna().tolist()
     dados = pd.read_excel(path_str, sheet_name="DADOS")
     parametros = pd.read_excel(path_str, sheet_name="Parametros_ANEC73", header=2, nrows=3)
-    return resumo, desconto, acerto, clientes, dados, parametros
+    precos = pd.read_excel(path_str, sheet_name="Parametros_ANEC73", header=12, nrows=12, usecols="A:B")
+    return resumo, desconto, acerto, clientes, dados, parametros, precos
 
 try:
-    resumo, desconto, acerto, clientes, dados, parametros = load_data(str(MOTOR_PATH), MOTOR_PATH.stat().st_mtime)
+    resumo, desconto, acerto, clientes, dados, parametros, precos = load_data(str(MOTOR_PATH), MOTOR_PATH.stat().st_mtime)
 except Exception as e:
     st.error(f"Nao foi possivel ler o motor.xlsx: {e}")
     st.stop()
@@ -144,7 +145,24 @@ def build_weekly(dados_str_ignore, mtime):
     )
     return grp.sort_values("Semana_ord")
 
+@st.cache_data
+def build_weekly_by_client(dados_str_ignore, mtime):
+    df = dados.copy()
+    df["Data Inicial"] = pd.to_datetime(df["Data Inicial"])
+    df["Data Final"] = pd.to_datetime(df["Data Final"])
+    df["Semana"] = df["Data Inicial"].dt.strftime("%d/%m") + " a " + df["Data Final"].dt.strftime("%d/%m")
+    grp = df.groupby(["Cliente", "Mes", "Semana", "Data Inicial"], as_index=False).apply(
+        lambda g: pd.Series({
+            "Volume (t)": g["Volume (t)"].sum(),
+            "Proteina (%)": (g["Volume (t)"] * g["Proteina (%)"]).sum() / g["Volume (t)"].sum(),
+            "Umidade (%)": (g["Volume (t)"] * g["Umidade (%)"]).sum() / g["Volume (t)"].sum(),
+            "Fibra (%)": (g["Volume (t)"] * g["Fibra (%)"]).sum() / g["Volume (t)"].sum(),
+        }), include_groups=False
+    )
+    return grp.sort_values(["Data Inicial", "Cliente"])
+
 semanal = build_weekly(str(MOTOR_PATH), MOTOR_PATH.stat().st_mtime)
+semanal_cli = build_weekly_by_client(str(MOTOR_PATH), MOTOR_PATH.stat().st_mtime)
 
 clientes = sorted(clientes)
 
@@ -242,7 +260,7 @@ st.markdown(
 clientes_ativos = sorted(resumo[resumo["Volume (t)"] > 0]["Cliente"].unique().tolist())
 n_sem_embarque = len(clientes) - len(clientes_ativos)
 
-paginas = ["Visao geral do pool", "Qualidade semanal do pool"] + clientes_ativos
+paginas = ["Visao geral do pool", "Qualidade semanal do pool", "Preco do farelo por mes"] + clientes_ativos
 escolha = st.sidebar.radio("Consultar", paginas, label_visibility="collapsed")
 if n_sem_embarque > 0:
     st.sidebar.caption(f"{n_sem_embarque} cliente(s) do pool ainda sem embarque neste periodo (oculto).")
@@ -300,12 +318,71 @@ elif escolha == "Qualidade semanal do pool":
             width='stretch', config={"displayModeBar": False},
         )
 
-    st.markdown("#### Tabela semanal")
+    st.markdown("#### Tabela semanal (pool)")
     tab_sem = semanal[["Semana", "Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"]].copy()
     tab_sem["Volume (t)"] = tab_sem["Volume (t)"].apply(fmt_vol)
     for c in ["Proteina (%)", "Umidade (%)", "Fibra (%)"]:
         tab_sem[c] = tab_sem[c].apply(fmt_pct)
     st.dataframe(tab_sem, hide_index=True, width='stretch')
+
+    st.markdown("#### Qualidade entregue por cliente")
+    st.caption("Filtre por cliente, mes e/ou semana para ver o que cada um entregou naquele periodo.")
+
+    clientes_opts = sorted(semanal_cli["Cliente"].unique().tolist())
+    meses_opts = [m for m in MESES if m in semanal_cli["Mes"].unique()]
+    semanas_opts = semanal_cli.sort_values("Data Inicial")["Semana"].unique().tolist()
+
+    fc1, fc2, fc3 = st.columns(3)
+    sel_clientes = fc1.multiselect("Cliente", clientes_opts, default=clientes_opts)
+    sel_meses_ext = fc2.multiselect("Mes", [MESES_EXT[m] for m in meses_opts], default=[MESES_EXT[m] for m in meses_opts])
+    sel_semanas = fc3.multiselect("Semana", semanas_opts, default=semanas_opts)
+
+    mes_rev = {v: k for k, v in MESES_EXT.items()}
+    sel_meses = [mes_rev[m] for m in sel_meses_ext]
+
+    filtrado = semanal_cli[
+        semanal_cli["Cliente"].isin(sel_clientes)
+        & semanal_cli["Mes"].isin(sel_meses)
+        & semanal_cli["Semana"].isin(sel_semanas)
+    ].copy()
+
+    if len(filtrado):
+        filtrado["Mes"] = filtrado["Mes"].map(MESES_EXT)
+        show = filtrado[["Cliente", "Mes", "Semana", "Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"]].copy()
+        show["Volume (t)"] = show["Volume (t)"].apply(fmt_vol)
+        for c in ["Proteina (%)", "Umidade (%)", "Fibra (%)"]:
+            show[c] = show[c].apply(fmt_pct)
+        st.dataframe(show, hide_index=True, width='stretch')
+    else:
+        st.caption("Nenhum resultado para os filtros selecionados.")
+
+# ----------------------------------------------------------------------------
+# Pagina: preco do farelo
+# ----------------------------------------------------------------------------
+elif escolha == "Preco do farelo por mes":
+    st.markdown("#### Preco USD/t do farelo por mes")
+    st.caption("Preco de referencia usado no calculo do valor do desconto (aba Parametros_ANEC73 do motor).")
+
+    precos_show = precos.copy()
+    precos_show = precos_show[precos_show["Mes"].isin(MESES)]
+    precos_show["MesExt"] = precos_show["Mes"].map(MESES_EXT)
+
+    fig = go.Figure(go.Bar(
+        x=precos_show["MesExt"], y=precos_show["Preco USD"],
+        marker_color=BLUE, text=[f"${v:,.0f}" for v in precos_show["Preco USD"]], textposition="outside",
+    ))
+    fig.update_layout(
+        height=280, margin=dict(l=10, r=10, t=10, b=10),
+        yaxis=dict(showgrid=True, gridcolor="#E7E3D8", tickprefix="$"),
+        xaxis=dict(showgrid=False),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="sans-serif", color="#1A2027"),
+    )
+    st.plotly_chart(fig, width='stretch', config={"displayModeBar": False})
+
+    tab_preco = precos_show[["MesExt", "Preco USD"]].rename(columns={"MesExt": "Mes"})
+    tab_preco["Preco USD"] = tab_preco["Preco USD"].apply(lambda v: f"US$ {v:,.0f}".replace(",", "."))
+    st.dataframe(tab_preco, hide_index=True, width='stretch')
 
 # ----------------------------------------------------------------------------
 # Pagina: cliente
