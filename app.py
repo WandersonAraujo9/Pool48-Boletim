@@ -193,8 +193,13 @@ st.markdown(
 # ----------------------------------------------------------------------------
 # Navegacao
 # ----------------------------------------------------------------------------
-paginas = ["Visao geral do pool"] + clientes
+clientes_ativos = sorted(resumo[resumo["Volume (t)"] > 0]["Cliente"].unique().tolist())
+n_sem_embarque = len(clientes) - len(clientes_ativos)
+
+paginas = ["Visao geral do pool"] + clientes_ativos
 escolha = st.sidebar.radio("Consultar", paginas, label_visibility="collapsed")
+if n_sem_embarque > 0:
+    st.sidebar.caption(f"{n_sem_embarque} cliente(s) do pool ainda sem embarque neste periodo (oculto).")
 
 def resumo_cliente(cliente):
     df = resumo[resumo["Cliente"] == cliente]
@@ -209,7 +214,7 @@ if escolha == "Visao geral do pool":
     volume_total = ativos["Volume (t)"].sum()
     n_ativos = ativos["Cliente"].nunique()
 
-    saldo_por_cliente = ativos.groupby("Cliente")["Saldo Total (US$)"].sum().reindex(clientes).fillna(0)
+    saldo_por_cliente = ativos.groupby("Cliente")["Saldo Total (US$)"].sum().sort_values(ascending=False)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Volume do pool", fmt_vol(volume_total))
