@@ -115,13 +115,36 @@ def load_data(path_str, mtime):
     desconto = pd.read_excel(path_str, sheet_name="Desconto_Cliente_Mes")
     acerto = pd.read_excel(path_str, sheet_name="Acerto_Detalhado")
     clientes = pd.read_excel(path_str, sheet_name="Clientes")["Cliente"].dropna().tolist()
-    return resumo, desconto, acerto, clientes
+    dados = pd.read_excel(path_str, sheet_name="DADOS")
+    parametros = pd.read_excel(path_str, sheet_name="Parametros_ANEC73", header=2, nrows=3)
+    return resumo, desconto, acerto, clientes, dados, parametros
 
 try:
-    resumo, desconto, acerto, clientes = load_data(str(MOTOR_PATH), MOTOR_PATH.stat().st_mtime)
+    resumo, desconto, acerto, clientes, dados, parametros = load_data(str(MOTOR_PATH), MOTOR_PATH.stat().st_mtime)
 except Exception as e:
     st.error(f"Nao foi possivel ler o motor.xlsx: {e}")
     st.stop()
+
+PADRAO_ANEC = {row["Parametro"]: row["Padrao ANEC73 (%)"] for _, row in parametros.iterrows()}
+
+@st.cache_data
+def build_weekly(dados_str_ignore, mtime):
+    df = dados.copy()
+    df["Data Inicial"] = pd.to_datetime(df["Data Inicial"])
+    df["Data Final"] = pd.to_datetime(df["Data Final"])
+    df["Semana"] = df["Data Inicial"].dt.strftime("%d/%m") + " a " + df["Data Final"].dt.strftime("%d/%m")
+    df["Semana_ord"] = df["Data Inicial"]
+    grp = df.groupby(["Semana", "Semana_ord"], as_index=False).apply(
+        lambda g: pd.Series({
+            "Volume (t)": g["Volume (t)"].sum(),
+            "Proteina (%)": (g["Volume (t)"] * g["Proteina (%)"]).sum() / g["Volume (t)"].sum(),
+            "Umidade (%)": (g["Volume (t)"] * g["Umidade (%)"]).sum() / g["Volume (t)"].sum(),
+            "Fibra (%)": (g["Volume (t)"] * g["Fibra (%)"]).sum() / g["Volume (t)"].sum(),
+        }), include_groups=False
+    )
+    return grp.sort_values("Semana_ord")
+
+semanal = build_weekly(str(MOTOR_PATH), MOTOR_PATH.stat().st_mtime)
 
 clientes = sorted(clientes)
 
@@ -175,6 +198,29 @@ def hbar_ranking(labels, valores, height=None):
     )
     return fig
 
+def line_semanal(semanas, valores, padrao, height=240):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=semanas, y=valores, mode="lines+markers",
+        line=dict(color=BLUE, width=2), marker=dict(size=6, color=BLUE),
+        name="Media do pool",
+    ))
+    if padrao is not None:
+        fig.add_trace(go.Scatter(
+            x=semanas, y=[padrao] * len(semanas), mode="lines",
+            line=dict(color=PAGA, width=1.3, dash="dash"),
+            name="Padrao ANEC 73",
+        ))
+    fig.update_layout(
+        height=height, margin=dict(l=10, r=10, t=10, b=10),
+        yaxis=dict(showgrid=True, gridcolor="#E7E3D8", ticksuffix="%"),
+        xaxis=dict(showgrid=False),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="sans-serif", color="#1A2027"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
 # ----------------------------------------------------------------------------
 # Cabecalho
 # ----------------------------------------------------------------------------
@@ -196,7 +242,7 @@ st.markdown(
 clientes_ativos = sorted(resumo[resumo["Volume (t)"] > 0]["Cliente"].unique().tolist())
 n_sem_embarque = len(clientes) - len(clientes_ativos)
 
-paginas = ["Visao geral do pool"] + clientes_ativos
+paginas = ["Visao geral do pool", "Qualidade semanal do pool"] + clientes_ativos
 escolha = st.sidebar.radio("Consultar", paginas, label_visibility="collapsed")
 if n_sem_embarque > 0:
     st.sidebar.caption(f"{n_sem_embarque} cliente(s) do pool ainda sem embarque neste periodo (oculto).")
@@ -234,6 +280,32 @@ if escolha == "Visao geral do pool":
     }).sort_values("Saldo total", ascending=False)
     tabela["Saldo total"] = tabela["Saldo total"].apply(fmt_money)
     st.dataframe(tabela, hide_index=True, width='stretch')
+
+# ----------------------------------------------------------------------------
+# Pagina: qualidade semanal do pool
+# ----------------------------------------------------------------------------
+elif escolha == "Qualidade semanal do pool":
+    st.markdown("#### Qualidade apurada semana a semana (media ponderada do pool)")
+    st.caption(
+        "Cada semana corresponde a uma janela de coleta (Data Inicial a Data Final) registrada na aba DADOS, "
+        "igual a planilha original. Media ponderada pelo volume de todos os clientes do pool naquela semana."
+    )
+
+    for par, col, padrao in [("Proteina", "Proteina (%)", PADRAO_ANEC.get("Proteina")),
+                              ("Umidade", "Umidade (%)", PADRAO_ANEC.get("Umidade")),
+                              ("Fibra", "Fibra (%)", PADRAO_ANEC.get("Fibra"))]:
+        st.markdown(f"##### {par}")
+        st.plotly_chart(
+            line_semanal(semanal["Semana"].tolist(), semanal[col].tolist(), padrao),
+            width='stretch', config={"displayModeBar": False},
+        )
+
+    st.markdown("#### Tabela semanal")
+    tab_sem = semanal[["Semana", "Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"]].copy()
+    tab_sem["Volume (t)"] = tab_sem["Volume (t)"].apply(fmt_vol)
+    for c in ["Proteina (%)", "Umidade (%)", "Fibra (%)"]:
+        tab_sem[c] = tab_sem[c].apply(fmt_pct)
+    st.dataframe(tab_sem, hide_index=True, width='stretch')
 
 # ----------------------------------------------------------------------------
 # Pagina: cliente
