@@ -119,21 +119,13 @@ def get_secret(key, default):
     except Exception:
         return default
 
-def get_client_passwords():
-    try:
-        return dict(st.secrets["client_passwords"])
-    except Exception:
-        return {}
-
-CLIENT_PASSWORDS = get_client_passwords()
+POOL_PASSWORD = get_secret("POOL_PASSWORD", "pool48")
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "admin48")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
-if "logged_client" not in st.session_state:
-    st.session_state.logged_client = None
 
 def login_screen():
     st.markdown(
@@ -155,21 +147,12 @@ def login_screen():
             pwd = st.text_input("Senha de acesso", type="password")
             submitted = st.form_submit_button("Entrar")
             if submitted:
-                matched_client = None
-                if pwd:
-                    for nome, senha in CLIENT_PASSWORDS.items():
-                        if senha and pwd == senha:
-                            matched_client = nome
-                            break
-                if pwd and pwd == ADMIN_PASSWORD:
+                if pwd == POOL_PASSWORD:
+                    st.session_state.authenticated = True
+                    st.rerun()
+                elif pwd == ADMIN_PASSWORD:
                     st.session_state.authenticated = True
                     st.session_state.is_admin = True
-                    st.session_state.logged_client = None
-                    st.rerun()
-                elif matched_client:
-                    st.session_state.authenticated = True
-                    st.session_state.is_admin = False
-                    st.session_state.logged_client = matched_client
                     st.rerun()
                 else:
                     st.error("Senha incorreta.")
@@ -177,8 +160,8 @@ def login_screen():
         st.subheader("Sobre este boletim")
         st.caption(
             "Consulta consolidada do pool de qualidade ANEC 73 — proteina, umidade e fibra, "
-            "com o desconto e o acerto financeiro entre os clientes. Cada cliente do pool tem "
-            "sua propria senha. Fale com o controle de qualidade do terminal se nao tiver a sua."
+            "com o desconto e o acerto financeiro entre os clientes. Fale com o controle de "
+            "qualidade do terminal se nao tiver a senha de acesso."
         )
 
 if not st.session_state.authenticated:
@@ -190,10 +173,6 @@ if not st.session_state.authenticated:
 # ----------------------------------------------------------------------------
 with st.sidebar:
     st.markdown(f"<p style='color:{NAVY};font-weight:600;font-size:15px;'>Pool 48 — ANEC 73</p>", unsafe_allow_html=True)
-    if st.session_state.is_admin:
-        st.caption("Logado como administrador")
-    elif st.session_state.logged_client:
-        st.caption(f"Logado como **{st.session_state.logged_client}**")
 
     if st.session_state.is_admin:
         with st.expander("Area do administrador", expanded=not MOTOR_PATH.exists()):
@@ -212,7 +191,6 @@ with st.sidebar:
     if st.button("Sair"):
         st.session_state.authenticated = False
         st.session_state.is_admin = False
-        st.session_state.logged_client = None
         st.rerun()
 
 if not MOTOR_PATH.exists():
@@ -392,10 +370,7 @@ clientes_ativos = sorted(resumo[resumo["Volume (t)"] > 0]["Cliente"].unique().to
 n_sem_embarque = len(clientes) - len(clientes_ativos)
 
 paginas = ["Visao geral do pool", "Qualidade semanal do pool", "Preco do farelo por mes"] + clientes_ativos
-default_idx = 0
-if st.session_state.logged_client and st.session_state.logged_client in paginas:
-    default_idx = paginas.index(st.session_state.logged_client)
-escolha = st.sidebar.radio("Consultar", paginas, index=default_idx, label_visibility="collapsed")
+escolha = st.sidebar.radio("Consultar", paginas, label_visibility="collapsed")
 if n_sem_embarque > 0:
     st.sidebar.caption(f"{n_sem_embarque} cliente(s) do pool ainda sem embarque neste periodo (oculto).")
 
