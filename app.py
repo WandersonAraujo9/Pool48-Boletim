@@ -55,10 +55,48 @@ def inject_global_style():
             border-right: 3px solid {ORANGE};
           }}
           [data-testid="stHeader"] {{ background: rgba(0,0,0,0); }}
+          .tablewrap {{
+            overflow-x:auto; background: rgba(255,255,255,0.62); border-radius:6px;
+            padding: 6px 10px 2px 10px; margin-bottom: 14px;
+          }}
+          table.styled-table {{
+            width:100%; border-collapse:collapse; font-family:'Source Sans Pro',sans-serif; font-size:13.5px;
+          }}
+          table.styled-table thead th {{
+            text-align:left; font-weight:700; color:{NAVY}; border-bottom:2px solid {NAVY};
+            padding:8px 10px; white-space:nowrap;
+          }}
+          table.styled-table tbody td {{
+            padding:7px 10px; border-bottom:1px solid #E7E3D8; font-variant-numeric:tabular-nums;
+            font-weight:500; color:#1A2027;
+          }}
+          table.styled-table thead th.num, table.styled-table tbody td.num {{ text-align:right; }}
+          table.styled-table tbody tr:hover td {{ background: rgba(233,135,15,0.10); }}
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+def render_table(df, right_align=None):
+    right_align = set(right_align or [])
+    if df is None or len(df) == 0:
+        st.caption("Sem dados para exibir.")
+        return
+    thead = "".join(
+        f'<th class="{"num" if c in right_align else ""}">{c}</th>' for c in df.columns
+    )
+    body_rows = []
+    for _, row in df.iterrows():
+        cells = "".join(
+            f'<td class="{"num" if c in right_align else ""}">{row[c]}</td>' for c in df.columns
+        )
+        body_rows.append(f"<tr>{cells}</tr>")
+    html = (
+        '<div class="tablewrap"><table class="styled-table">'
+        f'<thead><tr>{thead}</tr></thead><tbody>{"".join(body_rows)}</tbody>'
+        '</table></div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 def logos_html():
     imgs = []
@@ -369,7 +407,7 @@ if escolha == "Visao geral do pool":
     tabela = tabela_raw.copy()
     tabela["Saldo total (US$)"] = tabela["Saldo total (US$)"].apply(fmt_money)
     tabela = tabela.rename(columns={"Volume (t)": "Volume", "Saldo total (US$)": "Saldo total"})
-    st.dataframe(tabela, hide_index=True, width='stretch')
+    render_table(tabela, right_align=["Volume", "Saldo total"])
     excel_download_button({"Visao geral do pool": tabela_raw}, "visao_geral_pool.xlsx", key="dl_overview")
 
 # ----------------------------------------------------------------------------
@@ -397,7 +435,7 @@ elif escolha == "Qualidade semanal do pool":
     tab_sem["Volume (t)"] = tab_sem["Volume (t)"].apply(fmt_vol)
     for c in ["Proteina (%)", "Umidade (%)", "Fibra (%)"]:
         tab_sem[c] = tab_sem[c].apply(fmt_pct)
-    st.dataframe(tab_sem, hide_index=True, width='stretch')
+    render_table(tab_sem, right_align=["Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"])
     excel_download_button({"Semanal Pool": tab_sem_raw}, "qualidade_semanal_pool.xlsx", key="dl_semanal_pool")
 
     st.markdown("#### Qualidade entregue por cliente")
@@ -428,7 +466,7 @@ elif escolha == "Qualidade semanal do pool":
         show["Volume (t)"] = show["Volume (t)"].apply(fmt_vol)
         for c in ["Proteina (%)", "Umidade (%)", "Fibra (%)"]:
             show[c] = show[c].apply(fmt_pct)
-        st.dataframe(show, hide_index=True, width='stretch')
+        render_table(show, right_align=["Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"])
         excel_download_button({"Qualidade por cliente": show_raw}, "qualidade_semanal_por_cliente.xlsx", key="dl_semanal_cliente")
     else:
         st.caption("Nenhum resultado para os filtros selecionados.")
@@ -460,7 +498,7 @@ elif escolha == "Preco do farelo por mes":
     tab_preco = precos_show[["MesExt", "Preco USD"]].rename(columns={"MesExt": "Mes"})
     tab_preco_raw = tab_preco.copy()
     tab_preco["Preco USD"] = tab_preco["Preco USD"].apply(lambda v: f"US$ {v:,.0f}".replace(",", "."))
-    st.dataframe(tab_preco, hide_index=True, width='stretch')
+    render_table(tab_preco, right_align=["Preco USD"])
     excel_download_button({"Preco Farelo": tab_preco_raw}, "preco_farelo_mensal.xlsx", key="dl_preco")
 
 # ----------------------------------------------------------------------------
@@ -499,7 +537,7 @@ else:
                 else:
                     row[f"{par} - Resultado"] = row[f"{par} - Padrao"] = row[f"{par} - Pool"] = "-"
             pivot_rows.append(row)
-        st.dataframe(pd.DataFrame(pivot_rows), hide_index=True, width='stretch')
+        render_table(pd.DataFrame(pivot_rows), right_align=[c for c in pd.DataFrame(pivot_rows).columns if c != "Mes"])
 
         st.markdown("##### Detalhamento do acerto financeiro")
         det_raw = df_cli[["Mes", "Volume (t)", "Saldo Proteina (US$)", "Saldo Umidade (US$)", "Saldo Fibra (US$)",
@@ -509,7 +547,7 @@ else:
         det["Volume (t)"] = det["Volume (t)"].apply(fmt_vol)
         for c in ["Saldo Proteina (US$)", "Saldo Umidade (US$)", "Saldo Fibra (US$)", "Saldo Total (US$)"]:
             det[c] = det[c].apply(fmt_money)
-        st.dataframe(det, hide_index=True, width='stretch')
+        render_table(det, right_align=["Volume (t)", "Saldo Proteina (US$)", "Saldo Umidade (US$)", "Saldo Fibra (US$)", "Saldo Total (US$)"])
 
     def aba_parametro(par, saldo_col):
         st.markdown(f"##### Saldo de {par.lower()} no periodo")
@@ -532,7 +570,7 @@ else:
                     "Pool": fmt_pct(sub["Media Pool (%)"].iloc[0]),
                     "Saldo": fmt_money(saldo_m),
                 })
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width='stretch')
+        render_table(pd.DataFrame(rows), right_align=["Volume", "Resultado", "Padrao", "Pool", "Saldo"])
 
     with tab_prot:
         aba_parametro("Proteina", "Saldo Proteina (US$)")
@@ -551,7 +589,7 @@ else:
         ac_show["Volume (t)"] = ac_show["Volume (t)"].apply(fmt_vol)
         for c in ["Valor Desconto (US$)", "Credito (US$)", "Saldo do cliente (US$)"]:
             ac_show[c] = ac_show[c].apply(fmt_money)
-        st.dataframe(ac_show, hide_index=True, width='stretch')
+        render_table(ac_show, right_align=["Volume (t)", "Valor Desconto (US$)", "Credito (US$)", "Saldo do cliente (US$)"])
     else:
         st.caption("Sem embarques no periodo.")
 
