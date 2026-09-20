@@ -405,6 +405,7 @@ if escolha == "Visao geral do pool":
         "Situacao": ["Recebe" if v > 0 else ("Paga" if v < 0 else "Sem embarque") for v in saldo_por_cliente.values],
     }).sort_values("Saldo total (US$)", ascending=False)
     tabela = tabela_raw.copy()
+    tabela["Volume (t)"] = tabela["Volume (t)"].apply(fmt_vol)
     tabela["Saldo total (US$)"] = tabela["Saldo total (US$)"].apply(fmt_money)
     tabela = tabela.rename(columns={"Volume (t)": "Volume", "Saldo total (US$)": "Saldo total"})
     render_table(tabela, right_align=["Volume", "Saldo total"])
