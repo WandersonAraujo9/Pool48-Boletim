@@ -19,8 +19,58 @@ BLUE = "#065A82"
 TEAL = "#1C7293"
 TEAL_LIGHT = "#5DCAA5"
 GOLD = "#F2C200"
+ORANGE = "#E9870F"
 PAGA = "#B3413A"
 PAGA_LIGHT = "#F09595"
+
+ASSETS_DIR = Path(__file__).parent / "assets"
+
+def _b64(path):
+    import base64
+    try:
+        return base64.b64encode(path.read_bytes()).decode()
+    except Exception:
+        return None
+
+LOGO_ANEC_B64 = _b64(ASSETS_DIR / "logo_anec.png")
+LOGO_TERMINAL_B64 = _b64(ASSETS_DIR / "logo_terminal.png")
+BG_B64 = _b64(ASSETS_DIR / "background_faded.jpg")
+
+def inject_global_style():
+    bg_css = f'background-image: url("data:image/jpeg;base64,{BG_B64}");' if BG_B64 else ""
+    st.markdown(
+        f"""
+        <style>
+          .stApp {{
+            {bg_css}
+            background-size: cover;
+            background-position: center top;
+            background-attachment: fixed;
+            border: 7px solid transparent;
+            border-image: linear-gradient(135deg, {BLUE} 0%, {BLUE} 45%, {ORANGE} 55%, {ORANGE} 100%) 1;
+          }}
+          .block-container {{ padding-top: 2rem; }}
+          [data-testid="stSidebar"] {{
+            background: rgba(247,245,240,0.94);
+            border-right: 3px solid {ORANGE};
+          }}
+          [data-testid="stHeader"] {{ background: rgba(0,0,0,0); }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+def logos_html():
+    imgs = []
+    if LOGO_TERMINAL_B64:
+        imgs.append(f'<img src="data:image/png;base64,{LOGO_TERMINAL_B64}" style="height:42px;background:#F4F1E8;padding:4px 8px;border-radius:4px;">')
+    if LOGO_ANEC_B64:
+        imgs.append(f'<img src="data:image/png;base64,{LOGO_ANEC_B64}" style="height:42px;background:#F4F1E8;padding:4px 8px;border-radius:4px;">')
+    if not imgs:
+        return ""
+    return f'<div style="display:flex;gap:10px;align-items:center;">{"".join(imgs)}</div>'
+
+inject_global_style()
 
 # ----------------------------------------------------------------------------
 # Autenticacao
@@ -42,9 +92,12 @@ if "is_admin" not in st.session_state:
 def login_screen():
     st.markdown(
         f"""
-        <div style="background:linear-gradient(100deg,{NAVY},{BLUE});padding:28px 32px;border-radius:8px;margin-bottom:28px;">
-            <p style="color:#C9D6DE;font-size:13px;margin:0;">Terminal XXXIX &middot; Pool 48</p>
-            <h1 style="color:#F4F1E8;font-size:26px;font-weight:400;margin:4px 0 0 0;">Controle de Qualidade ANEC 73</h1>
+        <div style="background:linear-gradient(100deg,{NAVY},{BLUE});padding:28px 32px;border-radius:8px;margin-bottom:28px;display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;">
+            <div>
+                <p style="color:#C9D6DE;font-size:13px;margin:0;">Terminal XXXIX &middot; Pool 48</p>
+                <h1 style="color:#F4F1E8;font-size:26px;font-weight:400;margin:4px 0 0 0;">Controle de Qualidade ANEC 73</h1>
+            </div>
+            {logos_html()}
         </div>
         """,
         unsafe_allow_html=True,
@@ -184,6 +237,17 @@ def fmt_pct(v):
         return "-"
     return f"{v:.2f}%".replace(".", ",")
 
+def excel_download_button(sheets, filename, label="Baixar em Excel", key=None):
+    import io
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for sheet_name, df in sheets.items():
+            df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+    st.download_button(
+        label=f"\U0001F4E5 {label}", data=buffer.getvalue(), file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=key,
+    )
+
 def bar_saldo_mensal(meses, valores, height=220):
     colors = [TEAL_LIGHT if v >= 0 else PAGA_LIGHT for v in valores]
     fig = go.Figure(go.Bar(x=meses, y=valores, marker_color=colors))
@@ -205,12 +269,15 @@ def hbar_ranking(labels, valores, height=None):
     fig = go.Figure(go.Bar(
         x=valores_s, y=labels_s, orientation="h", marker_color=colors_s,
         text=[fmt_money(v) for v in valores_s], textposition="outside",
+        cliponaxis=False,
     ))
+    maxabs = max([abs(v) for v in valores_s], default=1) or 1
     fig.update_layout(
         height=height or (28 * len(labels) + 60),
-        margin=dict(l=10, r=60, t=10, b=10),
-        xaxis=dict(showgrid=False, zeroline=True, zerolinecolor="#D8D3C7", visible=False),
-        yaxis=dict(showgrid=False),
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(showgrid=False, zeroline=True, zerolinecolor="#D8D3C7", visible=False,
+                    range=[-maxabs * 1.45, maxabs * 1.45]),
+        yaxis=dict(showgrid=False, automargin=True),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="sans-serif", color="#1A2027"),
     )
@@ -245,10 +312,13 @@ def line_semanal(semanas, valores, padrao, height=240):
 gen_date = datetime.datetime.fromtimestamp(MOTOR_PATH.stat().st_mtime).strftime("%d/%m/%Y")
 st.markdown(
     f"""
-    <div style="background:linear-gradient(100deg,{NAVY},{BLUE});padding:22px 28px;border-radius:8px;margin-bottom:20px;">
-        <p style="color:#C9D6DE;font-size:13px;margin:0;">Terminal XXXIX &middot; Pool 48 &middot; Controle de Qualidade ANEC 73</p>
-        <h1 style="color:#F4F1E8;font-size:24px;font-weight:400;margin:4px 0 0 0;">Boletim Consolidado do Pool</h1>
-        <p style="color:#C9D6DE;font-size:12.5px;margin:8px 0 0 0;">Dados publicados em {gen_date} &middot; {len(clientes)} clientes no pool</p>
+    <div style="background:linear-gradient(100deg,{NAVY},{BLUE});padding:22px 28px;border-radius:8px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;">
+        <div>
+            <p style="color:#C9D6DE;font-size:13px;margin:0;">Terminal XXXIX &middot; Pool 48 &middot; Controle de Qualidade ANEC 73</p>
+            <h1 style="color:#F4F1E8;font-size:24px;font-weight:400;margin:4px 0 0 0;">Boletim Consolidado do Pool</h1>
+            <p style="color:#C9D6DE;font-size:12.5px;margin:8px 0 0 0;">Dados publicados em {gen_date} &middot; {len(clientes)} clientes no pool</p>
+        </div>
+        {logos_html()}
     </div>
     """,
     unsafe_allow_html=True,
@@ -290,14 +360,17 @@ if escolha == "Visao geral do pool":
                      width='stretch', config={"displayModeBar": False})
 
     st.markdown("#### Todos os clientes")
-    tabela = pd.DataFrame({
+    tabela_raw = pd.DataFrame({
         "Cliente": saldo_por_cliente.index,
-        "Volume": [fmt_vol(ativos[ativos["Cliente"] == c]["Volume (t)"].sum()) if c in ativos["Cliente"].values else "0 t" for c in saldo_por_cliente.index],
-        "Saldo total": saldo_por_cliente.values,
+        "Volume (t)": [ativos[ativos["Cliente"] == c]["Volume (t)"].sum() if c in ativos["Cliente"].values else 0 for c in saldo_por_cliente.index],
+        "Saldo total (US$)": saldo_por_cliente.values,
         "Situacao": ["Recebe" if v > 0 else ("Paga" if v < 0 else "Sem embarque") for v in saldo_por_cliente.values],
-    }).sort_values("Saldo total", ascending=False)
-    tabela["Saldo total"] = tabela["Saldo total"].apply(fmt_money)
+    }).sort_values("Saldo total (US$)", ascending=False)
+    tabela = tabela_raw.copy()
+    tabela["Saldo total (US$)"] = tabela["Saldo total (US$)"].apply(fmt_money)
+    tabela = tabela.rename(columns={"Volume (t)": "Volume", "Saldo total (US$)": "Saldo total"})
     st.dataframe(tabela, hide_index=True, width='stretch')
+    excel_download_button({"Visao geral do pool": tabela_raw}, "visao_geral_pool.xlsx", key="dl_overview")
 
 # ----------------------------------------------------------------------------
 # Pagina: qualidade semanal do pool
@@ -319,11 +392,13 @@ elif escolha == "Qualidade semanal do pool":
         )
 
     st.markdown("#### Tabela semanal (pool)")
-    tab_sem = semanal[["Semana", "Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"]].copy()
+    tab_sem_raw = semanal[["Semana", "Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"]].copy()
+    tab_sem = tab_sem_raw.copy()
     tab_sem["Volume (t)"] = tab_sem["Volume (t)"].apply(fmt_vol)
     for c in ["Proteina (%)", "Umidade (%)", "Fibra (%)"]:
         tab_sem[c] = tab_sem[c].apply(fmt_pct)
     st.dataframe(tab_sem, hide_index=True, width='stretch')
+    excel_download_button({"Semanal Pool": tab_sem_raw}, "qualidade_semanal_pool.xlsx", key="dl_semanal_pool")
 
     st.markdown("#### Qualidade entregue por cliente")
     st.caption("Filtre por cliente, mes e/ou semana para ver o que cada um entregou naquele periodo.")
@@ -348,11 +423,13 @@ elif escolha == "Qualidade semanal do pool":
 
     if len(filtrado):
         filtrado["Mes"] = filtrado["Mes"].map(MESES_EXT)
-        show = filtrado[["Cliente", "Mes", "Semana", "Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"]].copy()
+        show_raw = filtrado[["Cliente", "Mes", "Semana", "Volume (t)", "Proteina (%)", "Umidade (%)", "Fibra (%)"]].copy()
+        show = show_raw.copy()
         show["Volume (t)"] = show["Volume (t)"].apply(fmt_vol)
         for c in ["Proteina (%)", "Umidade (%)", "Fibra (%)"]:
             show[c] = show[c].apply(fmt_pct)
         st.dataframe(show, hide_index=True, width='stretch')
+        excel_download_button({"Qualidade por cliente": show_raw}, "qualidade_semanal_por_cliente.xlsx", key="dl_semanal_cliente")
     else:
         st.caption("Nenhum resultado para os filtros selecionados.")
 
@@ -381,8 +458,10 @@ elif escolha == "Preco do farelo por mes":
     st.plotly_chart(fig, width='stretch', config={"displayModeBar": False})
 
     tab_preco = precos_show[["MesExt", "Preco USD"]].rename(columns={"MesExt": "Mes"})
+    tab_preco_raw = tab_preco.copy()
     tab_preco["Preco USD"] = tab_preco["Preco USD"].apply(lambda v: f"US$ {v:,.0f}".replace(",", "."))
     st.dataframe(tab_preco, hide_index=True, width='stretch')
+    excel_download_button({"Preco Farelo": tab_preco_raw}, "preco_farelo_mensal.xlsx", key="dl_preco")
 
 # ----------------------------------------------------------------------------
 # Pagina: cliente
@@ -423,9 +502,10 @@ else:
         st.dataframe(pd.DataFrame(pivot_rows), hide_index=True, width='stretch')
 
         st.markdown("##### Detalhamento do acerto financeiro")
-        det = df_cli[["Mes", "Volume (t)", "Saldo Proteina (US$)", "Saldo Umidade (US$)", "Saldo Fibra (US$)",
-                       "Saldo Total (US$)", "Situacao"]].copy()
-        det["Mes"] = det["Mes"].map(MESES_EXT)
+        det_raw = df_cli[["Mes", "Volume (t)", "Saldo Proteina (US$)", "Saldo Umidade (US$)", "Saldo Fibra (US$)",
+                           "Saldo Total (US$)", "Situacao"]].copy()
+        det_raw["Mes"] = det_raw["Mes"].map(MESES_EXT)
+        det = det_raw.copy()
         det["Volume (t)"] = det["Volume (t)"].apply(fmt_vol)
         for c in ["Saldo Proteina (US$)", "Saldo Umidade (US$)", "Saldo Fibra (US$)", "Saldo Total (US$)"]:
             det[c] = det[c].apply(fmt_money)
@@ -463,15 +543,27 @@ else:
 
     st.markdown("##### Acerto com outros clientes")
     ac_cli = acerto[(acerto["Cliente"] == cliente) & (acerto["Volume (t)"] > 0)]
+    ac_raw = None
     if len(ac_cli):
-        ac_show = ac_cli[["Mes", "Parametro", "Volume (t)", "Valor Desconto (US$)", "Credito (US$)", "Saldo do cliente (US$)"]].copy()
-        ac_show["Mes"] = ac_show["Mes"].map(MESES_EXT)
+        ac_raw = ac_cli[["Mes", "Parametro", "Volume (t)", "Valor Desconto (US$)", "Credito (US$)", "Saldo do cliente (US$)"]].copy()
+        ac_raw["Mes"] = ac_raw["Mes"].map(MESES_EXT)
+        ac_show = ac_raw.copy()
         ac_show["Volume (t)"] = ac_show["Volume (t)"].apply(fmt_vol)
         for c in ["Valor Desconto (US$)", "Credito (US$)", "Saldo do cliente (US$)"]:
             ac_show[c] = ac_show[c].apply(fmt_money)
         st.dataframe(ac_show, hide_index=True, width='stretch')
     else:
         st.caption("Sem embarques no periodo.")
+
+    qualidade_raw = desconto[(desconto["Cliente"] == cliente) & (desconto["Volume (t)"] > 0)][
+        ["Mes", "Parametro", "Volume (t)", "Resultado (%)", "Padrao ANEC73 (%)", "Media Pool (%)"]
+    ].copy()
+    qualidade_raw["Mes"] = qualidade_raw["Mes"].map(MESES_EXT)
+
+    export_sheets = {"Detalhamento": det_raw, "Qualidade por parametro": qualidade_raw}
+    if ac_raw is not None:
+        export_sheets["Acerto com outros"] = ac_raw
+    excel_download_button(export_sheets, f"boletim_{cliente}.xlsx", key="dl_cliente")
 
 st.caption(
     "Boletim informativo, calculado a partir dos embarques registrados no Terminal XXXIX. "
